@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Entropy Simulation</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 20px;
+        }
+        #simulation-container {
+            display: flex;
+            justify-content: center;
+            align-items: flex-start;
+            gap: 20px;
+        }
+        #container {
+            width: 400px;
+            height: 200px;
+            border: 2px solid black;
+            position: relative;
+            overflow: hidden;
+        }
+        #chart-container {
+            width: 400px;
+            height: 200px;
+            border: 2px solid black;
+        }
+        .particle {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            position: absolute;
+            background-color: #4287f5;
+        }
+        .grid-cell {
+            position: absolute;
+            border: 1px dashed #aaa;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-size: 12px;
+            color: #333;
+        }
+        #controls {
+            margin-top: 20px;
+        }
+        #entropy, #cell-info {
+            font-size: 18px;
+            margin-top: 10px;
+        }
+        #step-button {
+            display: none;
+        }
+        /* New styles for flat, minimalistic buttons */
+        button {
+            background-color: #f0f0f0;
+            border: none;
+            color: #333;
+            padding: 5px 10px;
+            text-align: center;
+            text-decoration: none;
+            display: inline-block;
+            font-size: 13px;
+            margin: 4px 2px;
+            cursor: pointer;
+            border-radius: 5px;
+            transition: background-color 0.3s;
+        }
+        button:hover {
+            background-color: #e0e0e0;
+        }
+        /* New style for temperature slider */
+        #temperature-control {
+            margin-top: 10px;
+            width: 400px;
+            display: flex;
+            align-items: center;
+        }
+        #temperature-slider {
+            flex-grow: 1;
+            margin-right: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div id="simulation-container">
+        <div id="container"></div>
+        <div id="chart-container">
+            <canvas id="entropyChart"></canvas>
+        </div>
+    </div>
+    <div id="temperature-control">
+        <input type="range" id="temperature-slider" min="0" max="20" step="1" value="1">
+        <span id="temperature-value">Temperature: 1</span>
+    </div>
+    <div id="controls">
+        <button id="start">Start</button>
+        <button id="reset">Reset</button>
+        <button id="step-button">Step</button>
+    </div>
+    <div id="entropy">Total Entropy: 0</div>
+    <div id="cell-info">Hover over a cell to see its entropy contribution</div>
+
+    <script>
+        const container = document.getElementById('container');
+        const startButton = document.getElementById('start');
+        const resetButton = document.getElementById('reset');
+        const stepButton = document.getElementById('step-button');
+        const entropyDisplay = document.getElementById('entropy');
+        const cellInfoDisplay = document.getElementById('cell-info');
+        const temperatureSlider = document.getElementById('temperature-slider');
+        const temperatureValue = document.getElementById('temperature-value');
+        let particles = [];
+        let isRunning = false;
+        let entropyValue = 0;
+        const gridSize = 5;
+        const cellWidth = 400 / gridSize;
+        const cellHeight = 200 / gridSize;
+        const particleSpeed = 5; // Reduced speed for slower movement
+        const particleCount = 75; // Increased particle count for gas-like behavior
+        const particleRadius = 3; // Reduced radius for smaller particles
+        let temperature = 1; // Temperature factor to control particle energy
+
+        // Initialize entropy chart
+        const ctx = document.getElementById('entropyChart').getContext('2d');
+        const entropyChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [{
+                    label: 'Entropy',
+                    data: [],
+                    borderColor: 'rgb(75, 192, 192)',
+                    tension: 0,
+                    pointRadius: 0
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: false,
+                plugins: {
+                    legend: {
+                        display: false
+                    }
+                },
+                scales: {
+                    x: {
+                        type: 'linear',
+                        position: 'bottom',
+                        title: {
+                            display: true,
+                            text: 'Time'
+                        }
+                    },
+                    y: {
+                        title: {
+                            display: true,
+                            text: 'Entropy'
+                        }
+                    }
+                }
+            }
+        });
+
+        let timeStep = 0;
+
+        function createParticle() {
+            const particle = document.createElement('div');
+            particle.className = 'particle';
+            particle.style.left = Math.random() * 394 + 'px';
+            particle.style.top = Math.random() * 194 + 'px';
+            container.appendChild(particle);
+            particles.push({
+                element: particle,
+                x: parseInt(particle.style.left),
+                y: parseInt(particle.style.top),
+                vx: (Math.random() - 0.5) * particleSpeed,
+                vy: (Math.random() - 0.5) * particleSpeed,
+                mass: 1
+            });
+        }
+
+        function createGrid() {
+            for (let y = 0; y < gridSize; y++) {
+                for (let x = 0; x < gridSize; x++) {
+                    const cell = document.createElement('div');
+                    cell.className = 'grid-cell';
+                    cell.style.left = x * cellWidth + 'px';
+                    cell.style.top = y * cellHeight + 'px';
+                    cell.style.width = cellWidth + 'px';
+                    cell.style.height = cellHeight + 'px';
+                    container.appendChild(cell);
+
+                    cell.addEventListener('mouseover', () => {
+                        const count = countParticlesInCell(x, y);
+                        const totalParticles = particles.length;
+                        const probability = count / totalParticles;
+                        const entropyContribution = probability > 0 ? -probability * Math.log2(probability) : 0;
+                        cellInfoDisplay.textContent = `Cell (${x},${y}): ${count} particles, Entropy: ${entropyContribution.toFixed(4)}`;
+                    });
+
+                    cell.addEventListener('mouseout', () => {
+                        cellInfoDisplay.textContent = 'Hover over a cell to see its entropy contribution';
+                    });
+                }
+            }
+        }
+
+        function updateParticles() {
+            for (let i = 0; i < particles.length; i++) {
+                let particle = particles[i];
+                
+                // Apply random force to simulate gas particle behavior
+                particle.vx += (Math.random() - 0.5) * temperature;
+                particle.vy += (Math.random() - 0.5) * temperature;
+                
+                // Update position
+                particle.x += particle.vx;
+                particle.y += particle.vy;
+
+                // Wall collisions with energy loss
+                if (particle.x > 394 - particleRadius) {
+                    particle.x = 394 - particleRadius;
+                    particle.vx *= -0.9;
+                } else if (particle.x < particleRadius) {
+                    particle.x = particleRadius;
+                    particle.vx *= -0.9;
+                }
+
+                if (particle.y > 194 - particleRadius) {
+                    particle.y = 194 - particleRadius;
+                    particle.vy *= -0.9;
+                } else if (particle.y < particleRadius) {
+                    particle.y = particleRadius;
+                    particle.vy *= -0.9;
+                }
+
+                // Particle-particle collisions
+                for (let j = i + 1; j < particles.length; j++) {
+                    let otherParticle = particles[j];
+                    let dx = otherParticle.x - particle.x;
+                    let dy = otherParticle.y - particle.y;
+                    let distance = Math.sqrt(dx * dx + dy * dy);
+
+                    if (distance < 2 * particleRadius) {
+                        // Collision detected
+                        let angle = Math.atan2(dy, dx);
+                        let sin = Math.sin(angle);
+                        let cos = Math.cos(angle);
+
+                        // Rotate particle velocities
+                        let vx1 = particle.vx * cos + particle.vy * sin;
+                        let vy1 = particle.vy * cos - particle.vx * sin;
+                        let vx2 = otherParticle.vx * cos + otherParticle.vy * sin;
+                        let vy2 = otherParticle.vy * cos - otherParticle.vx * sin;
+
+                        // Elastic collision
+                        let temp = vx1;
+                        vx1 = vx2;
+                        vx2 = temp;
+
+                        // Rotate velocities back
+                        particle.vx = vx1 * cos - vy1 * sin;
+                        particle.vy = vy1 * cos + vx1 * sin;
+                        otherParticle.vx = vx2 * cos - vy2 * sin;
+                        otherParticle.vy = vy2 * cos + vx2 * sin;
+
+                        // Move particles apart to prevent sticking
+                        let moveX = (2 * particleRadius - distance) * dx / distance / 2;
+                        let moveY = (2 * particleRadius - distance) * dy / distance / 2;
+                        particle.x -= moveX;
+                        particle.y -= moveY;
+                        otherParticle.x += moveX;
+                        otherParticle.y += moveY;
+                    }
+                }
+
+                particle.element.style.left = particle.x + 'px';
+                particle.element.style.top = particle.y + 'px';
+            }
+        }
+
+        function countParticlesInCell(gridX, gridY) {
+            return particles.filter(particle => 
+                Math.floor(particle.x / cellWidth) === gridX && 
+                Math.floor(particle.y / cellHeight) === gridY
+            ).length;
+        }
+
+        function calculateEntropy() {
+            let entropy = 0;
+            const totalParticles = particles.length;
+
+            for (let y = 0; y < gridSize; y++) {
+                for (let x = 0; x < gridSize; x++) {
+                    const count = countParticlesInCell(x, y);
+                    if (count > 0) {
+                        const probability = count / totalParticles;
+                        entropy -= probability * Math.log2(probability);
+                    }
+                }
+            }
+
+            entropyValue = entropy;
+            entropyDisplay.textContent = `Total Entropy: ${entropy.toFixed(2)}`;
+
+            // Update entropy chart
+            entropyChart.data.labels.push(timeStep);
+            entropyChart.data.datasets[0].data.push(entropy);
+            // if (entropyChart.data.labels.length > 50) {
+            //     entropyChart.data.labels.shift();
+            //     entropyChart.data.datasets[0].data.shift();
+            // }
+            entropyChart.update();
+
+            timeStep++;
+
+            // Update cell display
+            const cells = document.querySelectorAll('.grid-cell');
+            cells.forEach((cell, index) => {
+                const x = index % gridSize;
+                const y = Math.floor(index / gridSize);
+                const count = countParticlesInCell(x, y);
+                cell.textContent = count;
+            });
+        }
+
+        function animate() {
+            if (isRunning) {
+                updateParticles();
+                calculateEntropy();
+                requestAnimationFrame(animate);
+            }
+        }
+
+        function step() {
+            updateParticles();
+            calculateEntropy();
+        }
+
+        startButton.addEventListener('click', () => {
+            if (!isRunning) {
+                isRunning = true;
+                animate();
+                startButton.textContent = 'Pause';
+                stepButton.style.display = 'none';
+            } else {
+                isRunning = false;
+                startButton.textContent = 'Resume';
+                stepButton.style.display = 'inline-block';
+            }
+        });
+
+        resetButton.addEventListener('click', () => {
+            isRunning = false;
+            startButton.textContent = 'Start';
+            stepButton.style.display = 'none';
+            particles.forEach(particle => container.removeChild(particle.element));
+            particles = [];
+            entropyValue = 0;
+            entropyDisplay.textContent = 'Total Entropy: 0';
+            cellInfoDisplay.textContent = 'Hover over a cell to see its entropy contribution';
+            for (let i = 0; i < particleCount; i++) {
+                createParticle();
+            }
+            calculateEntropy();
+            timeStep = 0;
+            entropyChart.data.labels = [];
+            entropyChart.data.datasets[0].data = [];
+            entropyChart.update();
+        });
+
+        stepButton.addEventListener('click', step);
+
+        temperatureSlider.addEventListener('input', () => {
+            temperature = parseFloat(temperatureSlider.value);
+            temperatureValue.textContent = `Temperature: ${temperature.toFixed(1)}`;
+        });
+
+        // Initialize simulation
+        createGrid();
+        for (let i = 0; i < particleCount; i++) {
+            createParticle();
+        }
+        calculateEntropy();
+    </script>
+</body>
+</html>
